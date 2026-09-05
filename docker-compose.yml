@@ -1,0 +1,66 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: gps_postgres
+    environment:
+      POSTGRES_DB: gps_tracking
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mqtt_broker:
+    image: eclipse-mosquitto:2.0
+    container_name: gps_mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-t", "test", "-m", "test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    container_name: gps_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/gps_tracking
+      SYNC_DATABASE_URL: postgresql://postgres:password@postgres:5432/gps_tracking
+      MQTT_BROKER_HOST: mqtt_broker
+      MQTT_BROKER_PORT: 1883
+      SECRET_KEY: super-secret-key-change-in-prod
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt_broker:
+        condition: service_healthy
+    volumes:
+      - .:/app
+
+  gps_simulator:
+    build: .
+    container_name: gps_simulator
+    command: python gps_simulator/simulator.py
+    environment:
+      MQTT_BROKER_HOST: mqtt_broker
+      MQTT_BROKER_PORT: 1883
+    depends_on:
+      - mqtt_broker
+      - backend
+
+volumes:
+  postgres_data:
